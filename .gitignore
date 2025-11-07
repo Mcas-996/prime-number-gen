@@ -1,1 +1,4 @@
 target/debug
+target/release/.fingerpoint
+target/release/build
+target/release/deps
