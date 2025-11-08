@@ -5,18 +5,23 @@ fn main() {
     println!("High Performance Prime Calculator - Fixed Version");
     println!("===========================================");
 
-    // 测试更大的范围以确保修复的完整性
-    const MAX_VALUE: u64 = 1_000_000_000; // 1亿，验证大范围的正确性
+    // 获取用户输入的最大值
+    println!("Enter max value (default: 100000000): ");
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).ok();
+
+    let max_value: u64 = input.trim().parse().unwrap_or(1_000_000_000).max(2);
+
     let start_time = Instant::now();
 
     println!(
         "Starting calculation of all primes between 1 and {}",
-        MAX_VALUE
+        max_value
     );
     println!("Algorithm: Segmented Sieve + Bit Compression + Odd Optimization");
     println!();
 
-    let primes = prime_sieve::segmented_sieve(MAX_VALUE, 1_000_000);
+    let primes = prime_sieve::segmented_sieve(max_value, 1_000_000);
 
     let duration = start_time.elapsed();
 
@@ -26,7 +31,7 @@ fn main() {
     println!("Time taken: {:.2} seconds", duration.as_secs_f64());
     println!(
         "Processing speed: {:.0} numbers/second",
-        MAX_VALUE as f64 / duration.as_secs_f64()
+        max_value as f64 / duration.as_secs_f64()
     );
 
     // 验证素数的正确性
@@ -73,7 +78,7 @@ fn main() {
     }
 
     // 与理论估计对比
-    let estimated_count = prime_sieve::estimate_pi(MAX_VALUE as f64);
+    let estimated_count = prime_sieve::estimate_pi(max_value as f64);
     let error_percent =
         ((primes.len() as f64 - estimated_count as f64) / estimated_count as f64 * 100.0).abs();
 
@@ -85,25 +90,25 @@ fn main() {
     println!("\n额外验证 - 检查已知的合数:");
     let test_composites = vec![4, 6, 8, 9, 10, 12, 15, 21, 25, 27, 33, 35, 39, 49];
     for &composite in &test_composites {
-        if composite <= MAX_VALUE && primes.contains(&composite) {
+        if composite <= max_value && primes.contains(&composite) {
             println!("  FAIL Incorrectly marked {} as prime", composite);
         }
     }
 
     // 检查一些已知的素数
-    println!("Additional verification - checking known primes:");
+    println!("额外验证 - 检查已知的素数:");
     let test_primes = vec![
         11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71,
     ];
     for &prime in &test_primes {
-        if prime <= MAX_VALUE && !primes.contains(&prime) {
+        if prime <= max_value && !primes.contains(&prime) {
             println!("  FAIL Incorrectly marked {} as composite", prime);
         }
     }
 
     if first_10_correct && error_percent < 5.0 {
-        println!("\nPASS Algorithm verification passed!");
+        println!("\n✅ Algorithm verification passed!");
     } else {
-        println!("\nFAIL Algorithm needs further fixes!");
+        println!("\n❌ Algorithm needs further fixes!");
     }
 }
