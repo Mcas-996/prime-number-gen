@@ -57,10 +57,6 @@ Calculating all primes within the u64 range is an extremely time-consuming task 
 2. Due to the enormous number of primes in the u64 range, the final results will consume significant memory
 3. The program can be interrupted at any time, and calculated primes will be lost
 
-## 国际化版本 (International Versions)
-
-- [中文版README](Chinese_note/README_zh.md)
-
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0 - see the [LICENSE](../LICENSE) file for details.
