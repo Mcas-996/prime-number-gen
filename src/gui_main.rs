@@ -1,0 +1,451 @@
+use eframe::egui;
+use prime::prime_sieve;
+use std::fs;
+use std::path::Path;
+use std::time::Instant;
+
+#[derive(Default)]
+struct PrimeCalculatorApp {
+    // 输入状态
+    max_value_input: String,
+    calculating: bool,
+
+    // 计算结果
+    primes: Vec<u64>,
+    calculation_time: f64,
+    processing_speed: u64,
+    error_message: Option<String>,
+
+    // 选项和过滤
+    show_composites: bool,
+    filter_range: bool,
+    range_start: String,
+    range_end: String,
+
+    // 特殊测试
+    testing_problematic: bool,
+    test_result: Option<TestResult>,
+
+    // 统计信息
+    total_primes: usize,
+}
+
+#[derive(Clone, Debug)]
+struct TestResult {
+    is_composite: bool,
+    message: String,
+}
+
+impl PrimeCalculatorApp {
+    fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+        Default::default()
+    }
+
+    fn calculate_primes(&mut self) {
+        // 清除之前的结果
+        self.error_message = None;
+        self.test_result = None;
+
+        // 解析输入
+        match self.max_value_input.trim().parse::<u64>() {
+            Ok(max_value) => {
+                if max_value < 2 {
+                    self.error_message = Some("值必须至少为2".to_string());
+                    return;
+                }
+
+                if max_value > 10_000_000_000 {
+                    self.error_message = Some("值过大，可能需要很长时间计算".to_string());
+                    return;
+                }
+
+                // 开始计算
+                self.calculating = true;
+
+                // 执行计算
+                let start_time = Instant::now();
+                match std::panic::catch_unwind(|| {
+                    prime_sieve::segmented_sieve(max_value, 1_000_000)
+                }) {
+                    Ok(primes) => {
+                        let duration = start_time.elapsed();
+
+                        self.primes = primes;
+                        self.total_primes = self.primes.len();
+                        self.calculation_time = duration.as_secs_f64();
+                        self.processing_speed = if duration.as_secs_f64() > 0.0 {
+                            (max_value as f64 / duration.as_secs_f64()) as u64
+                        } else {
+                            0
+                        };
+
+                        // 自动测试问题数字
+                        if max_value >= 21474836359 && self.testing_problematic {
+                            self.test_problematic_number();
+                        }
+                    }
+                    Err(_) => {
+                        self.error_message = Some("计算过程中发生错误".to_string());
+                    }
+                }
+
+                self.calculating = false;
+            }
+            Err(_) => {
+                self.error_message = Some("无效的数字输入".to_string());
+                self.calculating = false;
+            }
+        }
+    }
+
+    fn test_problematic_number(&mut self) {
+        let problem_number = 21474836359;
+
+        let is_marked_as_prime = self.primes.contains(&problem_number);
+
+        // 手动验证
+        let manual_result = self.verify_composite(problem_number);
+
+        self.test_result = Some(TestResult {
+            is_composite: !is_marked_as_prime && manual_result.is_composite,
+            message: if is_marked_as_prime && manual_result.is_composite {
+                format!(
+                    "❌ 错误：{} 被标识为素数，但实际上是合数 = {} × {}",
+                    21474836359u64, manual_result.factor1, manual_result.factor2
+                )
+            } else if !is_marked_as_prime && manual_result.is_composite {
+                format!(
+                    "✅ 正确：{} 被正确标识为合数 = {} × {}",
+                    21474836359u64, manual_result.factor1, manual_result.factor2
+                )
+            } else {
+                format!("21474836359 的测试结果异常")
+            },
+        });
+    }
+
+    fn verify_composite(&self, num: u64) -> FactorResult {
+        if num < 2 {
+            return FactorResult {
+                is_composite: false,
+                factor1: 0,
+                factor2: 0,
+            };
+        }
+
+        let sqrt_num = (num as f64).sqrt() as u64 + 1;
+        for i in 2..=sqrt_num {
+            if num % i == 0 {
+                return FactorResult {
+                    is_composite: true,
+                    factor1: i,
+                    factor2: num / i,
+                };
+            }
+        }
+
+        FactorResult {
+            is_composite: false,
+            factor1: 0,
+            factor2: 0,
+        }
+    }
+
+    fn get_filtered_numbers(&self) -> Vec<NumberInfo> {
+        let mut numbers = Vec::new();
+
+        let max_val = match self.primes.last() {
+            Some(&val) => val,
+            None => return numbers,
+        };
+        let mut range_start = if self.filter_range {
+            self.range_start.parse().unwrap_or(1)
+        } else {
+            1
+        };
+        if range_start == 0 {
+            range_start = 1;
+        }
+
+        let mut range_end = if self.filter_range {
+            self.range_end.parse().unwrap_or(max_val)
+        } else {
+            max_val
+        };
+        if range_end > max_val {
+            range_end = max_val;
+        }
+
+        if range_start > max_val {
+            return numbers;
+        }
+
+        if range_start > range_end {
+            std::mem::swap(&mut range_start, &mut range_end);
+        }
+
+        let mut prime_iter = self.primes.iter().peekable();
+
+        while let Some(&p) = prime_iter.peek() {
+            if *p < range_start {
+                prime_iter.next();
+            } else {
+                break;
+            }
+        }
+
+        for num in range_start..=range_end {
+            while let Some(&p) = prime_iter.peek() {
+                if *p < num {
+                    prime_iter.next();
+                } else {
+                    break;
+                }
+            }
+
+            let is_prime = prime_iter.peek().map(|&&p| p == num).unwrap_or(false);
+            if is_prime {
+                prime_iter.next(); // 消费这个素数
+            }
+
+            if is_prime || self.show_composites {
+                numbers.push(NumberInfo {
+                    number: num,
+                    is_prime,
+                });
+            }
+        }
+
+        numbers
+    }
+}
+
+#[derive(Clone, Debug)]
+struct NumberInfo {
+    number: u64,
+    is_prime: bool,
+}
+
+#[derive(Clone, Debug)]
+struct FactorResult {
+    is_composite: bool,
+    factor1: u64,
+    factor2: u64,
+}
+
+impl eframe::App for PrimeCalculatorApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("🔢 高性能素数计算器 - 图形界面版");
+            ui.separator();
+
+            // 输入区域
+            ui.horizontal(|ui| {
+                ui.label("最大值:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.max_value_input)
+                        .desired_width(150.0)
+                        .hint_text("例如: 1000000"),
+                );
+
+                if ui
+                    .add_enabled(!self.calculating, egui::Button::new("🚀 计算素数"))
+                    .clicked()
+                {
+                    self.calculate_primes();
+                }
+
+                if self.calculating {
+                    ui.spinner();
+                    ui.label("计算中...");
+                }
+            });
+
+            // 错误信息
+            if let Some(ref error) = self.error_message {
+                ui.colored_label(egui::Color32::RED, format!("❌ {}", error));
+            }
+
+            ui.separator();
+
+            // 结果统计
+            if !self.primes.is_empty() && !self.calculating {
+                ui.horizontal(|ui| {
+                    ui.label("📊 统计信息:");
+                    ui.separator();
+                    ui.label(format!("素数总数: {}", self.total_primes));
+                    ui.label(format!("计算时间: {:.2}秒", self.calculation_time));
+                    ui.label(format!("处理速度: {}数字/秒", self.processing_speed));
+                });
+
+                ui.separator();
+            }
+
+            // 选项控制
+            egui::CollapsingHeader::new("⚙️ 选项和设置").show(ui, |ui| {
+                ui.checkbox(&mut self.show_composites, "显示合数");
+
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.filter_range, "范围过滤:");
+                    if self.filter_range {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.range_start)
+                                .desired_width(80.0)
+                                .hint_text("开始"),
+                        );
+                        ui.label("-");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.range_end)
+                                .desired_width(80.0)
+                                .hint_text("结束"),
+                        );
+                    }
+                });
+
+                ui.checkbox(
+                    &mut self.testing_problematic,
+                    "自动测试问题数字 (21474836359)",
+                );
+
+                if ui.button("🔍 测试问题数字").clicked() {
+                    self.test_problematic_number();
+                }
+            });
+
+            // 测试结果
+            if let Some(ref test_result) = self.test_result {
+                ui.separator();
+                ui.colored_label(
+                    if test_result.is_composite {
+                        egui::Color32::GREEN
+                    } else {
+                        egui::Color32::RED
+                    },
+                    &test_result.message,
+                );
+            }
+
+            ui.separator();
+
+            // 素数列表
+            if !self.primes.is_empty() && !self.calculating {
+                let filtered_numbers = self.get_filtered_numbers();
+
+                ui.label(format!(
+                    "📋 结果列表 (显示 {} 个数字):",
+                    filtered_numbers.len()
+                ));
+
+                egui::ScrollArea::vertical()
+                    .max_height(300.0)
+                    .show(ui, |ui| {
+                        let chunk_size = 10; // 每行显示的数字数量
+
+                        for chunk in filtered_numbers.chunks(chunk_size) {
+                            ui.horizontal(|ui| {
+                                for info in chunk {
+                                    if info.is_prime {
+                                        ui.colored_label(
+                                            egui::Color32::from_rgb(0, 150, 0),
+                                            format!("{:>8}", info.number),
+                                        );
+                                    } else {
+                                        ui.colored_label(
+                                            egui::Color32::GRAY,
+                                            format!("{:>8}", info.number),
+                                        );
+                                    }
+                                }
+                            });
+                        }
+                    });
+            }
+        });
+
+        // 状态栏
+        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("💡 提示:");
+                ui.label("输入一个数字来计算该范围内的所有素数");
+                ui.separator();
+                if self.primes.len() > 0 {
+                    ui.label(format!(
+                        "当前显示: {} 个数字",
+                        self.get_filtered_numbers().len()
+                    ));
+                }
+            });
+        });
+    }
+}
+
+// 尝试加载字体文件的函数
+fn load_font_data() -> Option<egui::FontData> {
+    // 按优先级尝试不同的字体路径
+    let font_paths = vec![
+        // Windows 字体路径
+        "C:\\Windows\\Fonts\\msyh.ttc",   // 微软雅黑
+        "C:\\Windows\\Fonts\\simhei.ttf", // 黑体
+        "C:\\Windows\\Fonts\\simsun.ttc", // 宋体
+        // macOS 字体路径
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        // Linux 字体路径
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        // 项目根目录下的字体
+        "msyh.ttc",
+        "simhei.ttf",
+    ];
+
+    for path in font_paths {
+        if Path::new(path).exists() {
+            if let Ok(font_bytes) = fs::read(path) {
+                println!("成功加载字体: {}", path);
+                return Some(egui::FontData::from_owned(font_bytes));
+            }
+        }
+    }
+
+    println!("警告: 未找到适合中文字符的字体，使用默认字体");
+    None
+}
+
+fn main() -> Result<(), eframe::Error> {
+    // 设置字体
+    let mut fonts = egui::FontDefinitions::default();
+
+    if let Some(font_data) = load_font_data() {
+        // 注册加载的字体
+        fonts.font_data.insert("chinese_font".to_owned(), font_data);
+
+        // 设置为默认字体
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .insert(0, "chinese_font".to_owned());
+
+        fonts
+            .families
+            .entry(egui::FontFamily::Monospace)
+            .or_default()
+            .push("chinese_font".to_owned());
+    }
+
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 700.0]),
+        ..Default::default()
+    };
+
+    eframe::run_native(
+        "高性能素数计算器",
+        options,
+        Box::new(|cc| {
+            cc.egui_ctx.set_fonts(fonts);
+            Box::new(PrimeCalculatorApp::new(cc))
+        }),
+    )
+}

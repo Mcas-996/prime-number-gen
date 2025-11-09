@@ -8,8 +8,10 @@ A high-performance Rust application that calculates all prime numbers up to `u64
 - **Segmented Processing**: Handles the massive `u64::MAX` range (18,446,744,073,709,551,615) without memory overflow
 - **Bit Compression**: Optimized memory usage using compact bit array representation
 - **Odd Number Optimization**: Processes only odd numbers to improve performance
-- **Progress Monitoring**: Real-time progress display every 2 seconds during computation
+- **Progress Monitoring**: Real-time progress display during computation
 - **Verification**: Built-in validation to ensure correctness of calculated primes
+- **GUI Interface**: Modern graphical user interface with eframe/egui
+- **Dual Interface**: Both command-line and graphical versions available
 
 ## Quick Start
 
@@ -29,15 +31,37 @@ cargo build --release
 
 ### Usage
 
+#### Command Line Interface (CLI)
 ```bash
-./target/release/prime.exe
+./target/release/prime-cli.exe
 ```
 
-The program will:
+#### Graphical User Interface (GUI)
+```bash
+./target/release/prime-gui.exe
+```
+or
+```bash
+cargo run --bin prime-gui
+```
+
+#### Development Builds
+```bash
+cargo run --bin prime-cli    # Command line version
+cargo run --bin prime-gui    # GUI version
+```
+
+The CLI program will:
 1. Display configuration information
-2. Calculate primes up to 1,000,000,000 (default test range)
+2. Calculate primes up to user-specified range
 3. Show progress during computation
 4. Display results and verification status
+
+The GUI program provides:
+1. Interactive input with real-time validation
+2. Visual prime/composite distinction with color coding
+3. Special testing for algorithm verification
+4. Filtered range display options
 
 ## Algorithm Details
 
@@ -117,22 +141,35 @@ const ODDS_PER_SEGMENT: u64 = 500_000; // Segmentation parameter
 [dependencies]
 rand = "0.8"
 rayon = "1.5"
+eframe = "0.27.2"
+egui = "0.27.2"
+egui_extras = "0.27.2"
+serde = { version = "1.0", features = ["derive"] }
 ```
 
 - **rand**: For potential randomness in testing
 - **rayon**: For potential parallel computation optimizations
+- **eframe/egui**: Modern immediate mode GUI framework
+- **serde**: Serialization support for data persistence
 
 ## Project Structure
 
 ```
 6/
 ├── src/
-│   └── main.rs              # Main application logic
+│   ├── main.rs              # CLI application logic
+│   ├── lib.rs               # Library interface for tests
+│   ├── gui_main.rs          # GUI application
+│   └── prime_sieve.rs       # Core sieve algorithm
+├── tests/
+│   └── prime_sieve_tests.rs # Comprehensive test suite
 ├── target/                  # Build output directory
 ├── Cargo.toml              # Project dependencies
 ├── Cargo.lock              # Dependency versions
 ├── .gitignore              # Git ignore rules
 ├── README.md               # This file (English)
+├── GUI_GUIDE.md            # GUI user guide
+├── TEST_RESULTS.md         # Test results documentation
 ├── README_zh.md            # Chinese version
 └── agent.md                # Additional documentation
 ```
@@ -183,7 +220,7 @@ RUST_LOG=debug ./target/release/prime.exe
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the Apache License 2.0 - see the LICENSE file for details.
 
 ## Acknowledgments
 
@@ -191,6 +228,34 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Modern prime number computation techniques
 - Rust's performance optimization capabilities
 
+## 🖥️ GUI Features
+
+The graphical interface provides enhanced user experience:
+
+- **Real-time Calculation**: Visual feedback during computation
+- **Color-coded Display**: Green for primes, gray for composites
+- **Interactive Filtering**: Range-based result filtering
+- **Built-in Testing**: Automatic verification of known problematic numbers
+- **Progress Monitoring**: Visual progress indicators
+
+For detailed GUI usage instructions, see [GUI_GUIDE.md](GUI_GUIDE.md).
+
+## 🧪 Testing
+
+Comprehensive test suite covering:
+- Basic sieve functionality
+- Edge cases and error handling
+- Algorithm correctness verification
+- Performance benchmarks
+- Specific bug regression tests
+
+Run tests with:
+```bash
+cargo test
+```
+
+See [TEST_RESULTS.md](TEST_RESULTS.md) for detailed test results.
+
 ---
 
-**Note**: Computing all primes up to `u64::MAX` is an extremely resource-intensive task intended primarily for algorithm demonstration and benchmarking purposes.
+**Note**: Computing all primes up to `u64::MAX` is an extremely resource-intensive task intended primarily for algorithm demonstration and benchmarking purposes. For most practical use, ranges up to 1 billion are recommended.
