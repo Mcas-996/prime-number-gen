@@ -6,27 +6,27 @@ use std::time::Instant;
 
 #[derive(Default)]
 struct PrimeCalculatorApp {
-    // 输入状态
+    // Input state
     max_value_input: String,
     calculating: bool,
 
-    // 计算结果
+    // Computation results
     primes: Vec<u64>,
     calculation_time: f64,
     processing_speed: u64,
     error_message: Option<String>,
 
-    // 选项和过滤
+    // Options and filtering
     show_composites: bool,
     filter_range: bool,
     range_start: String,
     range_end: String,
 
-    // 特殊测试
+    // Special test controls
     testing_problematic: bool,
     test_result: Option<TestResult>,
 
-    // 统计信息
+    // Summary statistics
     total_primes: usize,
 }
 
@@ -42,27 +42,29 @@ impl PrimeCalculatorApp {
     }
 
     fn calculate_primes(&mut self) {
-        // 清除之前的结果
+        // Clear previous results
         self.error_message = None;
         self.test_result = None;
 
-        // 解析输入
+        // Parse user input
         match self.max_value_input.trim().parse::<u64>() {
             Ok(max_value) => {
                 if max_value < 2 {
-                    self.error_message = Some("值必须至少为2".to_string());
+                    self.error_message = Some("Value must be at least 2".to_string());
                     return;
                 }
 
                 if max_value > 10_000_000_000 {
-                    self.error_message = Some("值过大，可能需要很长时间计算".to_string());
+                    self.error_message = Some(
+                        "Value is too large and may take a very long time to compute".to_string(),
+                    );
                     return;
                 }
 
-                // 开始计算
+                // Start the calculation
                 self.calculating = true;
 
-                // 执行计算
+                // Execute the computation
                 let start_time = Instant::now();
                 match std::panic::catch_unwind(|| {
                     prime_sieve::segmented_sieve(max_value, 1_000_000)
@@ -79,20 +81,21 @@ impl PrimeCalculatorApp {
                             0
                         };
 
-                        // 自动测试问题数字
+                        // Automatically test the problematic number
                         if max_value >= 21474836359 && self.testing_problematic {
                             self.test_problematic_number();
                         }
                     }
                     Err(_) => {
-                        self.error_message = Some("计算过程中发生错误".to_string());
+                        self.error_message =
+                            Some("An error occurred during the calculation".to_string());
                     }
                 }
 
                 self.calculating = false;
             }
             Err(_) => {
-                self.error_message = Some("无效的数字输入".to_string());
+                self.error_message = Some("Invalid numeric input".to_string());
                 self.calculating = false;
             }
         }
@@ -103,23 +106,23 @@ impl PrimeCalculatorApp {
 
         let is_marked_as_prime = self.primes.contains(&problem_number);
 
-        // 手动验证
+        // Manual verification
         let manual_result = self.verify_composite(problem_number);
 
         self.test_result = Some(TestResult {
             is_composite: !is_marked_as_prime && manual_result.is_composite,
             message: if is_marked_as_prime && manual_result.is_composite {
                 format!(
-                    "❌ 错误：{} 被标识为素数，但实际上是合数 = {} × {}",
+                    "❌ Error: {} was marked as prime but is composite = {} x {}",
                     21474836359u64, manual_result.factor1, manual_result.factor2
                 )
             } else if !is_marked_as_prime && manual_result.is_composite {
                 format!(
-                    "✅ 正确：{} 被正确标识为合数 = {} × {}",
+                    "✅ Correct: {} was correctly marked as composite = {} x {}",
                     21474836359u64, manual_result.factor1, manual_result.factor2
                 )
             } else {
-                format!("21474836359 的测试结果异常")
+                format!("Unexpected test result for 21474836359")
             },
         });
     }
@@ -205,7 +208,7 @@ impl PrimeCalculatorApp {
 
             let is_prime = prime_iter.peek().map(|&&p| p == num).unwrap_or(false);
             if is_prime {
-                prime_iter.next(); // 消费这个素数
+                prime_iter.next(); // Consume this prime entry
             }
 
             if is_prime || self.show_composites {
@@ -236,20 +239,20 @@ struct FactorResult {
 impl eframe::App for PrimeCalculatorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("🔢 高性能素数计算器 - 图形界面版");
+            ui.heading("🔢 High Performance Prime Calculator - GUI Edition");
             ui.separator();
 
-            // 输入区域
+            // Input area
             ui.horizontal(|ui| {
-                ui.label("最大值:");
+                ui.label("Max value:");
                 ui.add(
                     egui::TextEdit::singleline(&mut self.max_value_input)
                         .desired_width(150.0)
-                        .hint_text("例如: 1000000"),
+                        .hint_text("e.g. 1000000"),
                 );
 
                 if ui
-                    .add_enabled(!self.calculating, egui::Button::new("🚀 计算素数"))
+                    .add_enabled(!self.calculating, egui::Button::new("🚀 Calculate primes"))
                     .clicked()
                 {
                     self.calculate_primes();
@@ -257,62 +260,65 @@ impl eframe::App for PrimeCalculatorApp {
 
                 if self.calculating {
                     ui.spinner();
-                    ui.label("计算中...");
+                    ui.label("Calculating...");
                 }
             });
 
-            // 错误信息
+            // Error message
             if let Some(ref error) = self.error_message {
                 ui.colored_label(egui::Color32::RED, format!("❌ {}", error));
             }
 
             ui.separator();
 
-            // 结果统计
+            // Result statistics
             if !self.primes.is_empty() && !self.calculating {
                 ui.horizontal(|ui| {
-                    ui.label("📊 统计信息:");
+                    ui.label("📊 Statistics:");
                     ui.separator();
-                    ui.label(format!("素数总数: {}", self.total_primes));
-                    ui.label(format!("计算时间: {:.2}秒", self.calculation_time));
-                    ui.label(format!("处理速度: {}数字/秒", self.processing_speed));
+                    ui.label(format!("Total primes: {}", self.total_primes));
+                    ui.label(format!("Elapsed time: {:.2}s", self.calculation_time));
+                    ui.label(format!(
+                        "Processing speed: {} numbers/second",
+                        self.processing_speed
+                    ));
                 });
 
                 ui.separator();
             }
 
-            // 选项控制
-            egui::CollapsingHeader::new("⚙️ 选项和设置").show(ui, |ui| {
-                ui.checkbox(&mut self.show_composites, "显示合数");
+            // Option controls
+            egui::CollapsingHeader::new("⚙️ Options & Settings").show(ui, |ui| {
+                ui.checkbox(&mut self.show_composites, "Show composites");
 
                 ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.filter_range, "范围过滤:");
+                    ui.checkbox(&mut self.filter_range, "Range filter:");
                     if self.filter_range {
                         ui.add(
                             egui::TextEdit::singleline(&mut self.range_start)
                                 .desired_width(80.0)
-                                .hint_text("开始"),
+                                .hint_text("Start"),
                         );
                         ui.label("-");
                         ui.add(
                             egui::TextEdit::singleline(&mut self.range_end)
                                 .desired_width(80.0)
-                                .hint_text("结束"),
+                                .hint_text("End"),
                         );
                     }
                 });
 
                 ui.checkbox(
                     &mut self.testing_problematic,
-                    "自动测试问题数字 (21474836359)",
+                    "Automatically test problematic number (21474836359)",
                 );
 
-                if ui.button("🔍 测试问题数字").clicked() {
+                if ui.button("🔍 Test problematic number").clicked() {
                     self.test_problematic_number();
                 }
             });
 
-            // 测试结果
+            // Test results
             if let Some(ref test_result) = self.test_result {
                 ui.separator();
                 ui.colored_label(
@@ -327,19 +333,19 @@ impl eframe::App for PrimeCalculatorApp {
 
             ui.separator();
 
-            // 素数列表
+            // Prime list
             if !self.primes.is_empty() && !self.calculating {
                 let filtered_numbers = self.get_filtered_numbers();
 
                 ui.label(format!(
-                    "📋 结果列表 (显示 {} 个数字):",
+                    "📋 Result list (showing {} numbers):",
                     filtered_numbers.len()
                 ));
 
                 egui::ScrollArea::vertical()
                     .max_height(300.0)
                     .show(ui, |ui| {
-                        let chunk_size = 10; // 每行显示的数字数量
+                        let chunk_size = 10; // Numbers per row
 
                         for chunk in filtered_numbers.chunks(chunk_size) {
                             ui.horizontal(|ui| {
@@ -362,16 +368,16 @@ impl eframe::App for PrimeCalculatorApp {
             }
         });
 
-        // 状态栏
+        // Status bar
         egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("💡 提示:");
-                ui.label("输入一个数字来计算该范围内的所有素数");
+                ui.label("💡 Tips:");
+                ui.label("Enter a number to calculate every prime within that range");
                 ui.separator();
                 if self.primes.len() > 0 {
                     ui.label(format!(
-                        "当前显示: {} 个数字",
+                        "Currently showing: {} numbers",
                         self.get_filtered_numbers().len()
                     ));
                 }
@@ -380,22 +386,22 @@ impl eframe::App for PrimeCalculatorApp {
     }
 }
 
-// 尝试加载字体文件的函数
+// Attempt to load font files
 fn load_font_data() -> Option<egui::FontData> {
-    // 按优先级尝试不同的字体路径
+    // Try different font paths in order of preference
     let font_paths = vec![
-        // Windows 字体路径
-        "C:\\Windows\\Fonts\\msyh.ttc",   // 微软雅黑
-        "C:\\Windows\\Fonts\\simhei.ttf", // 黑体
-        "C:\\Windows\\Fonts\\simsun.ttc", // 宋体
-        // macOS 字体路径
+        // Windows font paths
+        "C:\\Windows\\Fonts\\msyh.ttc",   // Microsoft YaHei
+        "C:\\Windows\\Fonts\\simhei.ttf", // SimHei
+        "C:\\Windows\\Fonts\\simsun.ttc", // SimSun
+        // macOS font paths
         "/System/Library/Fonts/PingFang.ttc",
         "/System/Library/Fonts/Hiragino Sans GB.ttc",
-        // Linux 字体路径
+        // Linux font paths
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        // 项目根目录下的字体
+        // Fonts located in the project root
         "msyh.ttc",
         "simhei.ttf",
     ];
@@ -403,25 +409,25 @@ fn load_font_data() -> Option<egui::FontData> {
     for path in font_paths {
         if Path::new(path).exists() {
             if let Ok(font_bytes) = fs::read(path) {
-                println!("成功加载字体: {}", path);
+                println!("Successfully loaded font: {}", path);
                 return Some(egui::FontData::from_owned(font_bytes));
             }
         }
     }
 
-    println!("警告: 未找到适合中文字符的字体，使用默认字体");
+    println!("Warning: No suitable CJK font found; using the default font");
     None
 }
 
 fn main() -> Result<(), eframe::Error> {
-    // 设置字体
+    // Configure fonts
     let mut fonts = egui::FontDefinitions::default();
 
     if let Some(font_data) = load_font_data() {
-        // 注册加载的字体
+        // Register the loaded font
         fonts.font_data.insert("chinese_font".to_owned(), font_data);
 
-        // 设置为默认字体
+        // Make it the default font
         fonts
             .families
             .entry(egui::FontFamily::Proportional)
@@ -441,7 +447,7 @@ fn main() -> Result<(), eframe::Error> {
     };
 
     eframe::run_native(
-        "高性能素数计算器",
+        "High Performance Prime Calculator",
         options,
         Box::new(|cc| {
             cc.egui_ctx.set_fonts(fonts);
