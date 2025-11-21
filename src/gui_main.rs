@@ -38,15 +38,15 @@ struct TestResult {
 
 impl PrimeCalculatorApp {
     fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        Default::default()
+        let mut app = Self::default();
+        app.max_value_input = "100000".to_string();
+        app
     }
 
     fn calculate_primes(&mut self) {
-        // Clear previous results
         self.error_message = None;
         self.test_result = None;
 
-        // Parse user input
         match self.max_value_input.trim().parse::<u64>() {
             Ok(max_value) => {
                 if max_value < 2 {
@@ -61,10 +61,8 @@ impl PrimeCalculatorApp {
                     return;
                 }
 
-                // Start the calculation
                 self.calculating = true;
 
-                // Execute the computation
                 let start_time = Instant::now();
                 match std::panic::catch_unwind(|| {
                     prime_sieve::segmented_sieve(max_value, 1_000_000)
@@ -81,7 +79,6 @@ impl PrimeCalculatorApp {
                             0
                         };
 
-                        // Automatically test the problematic number
                         if max_value >= 21474836359 && self.testing_problematic {
                             self.test_problematic_number();
                         }
@@ -103,22 +100,19 @@ impl PrimeCalculatorApp {
 
     fn test_problematic_number(&mut self) {
         let problem_number = 21474836359;
-
         let is_marked_as_prime = self.primes.contains(&problem_number);
-
-        // Manual verification
         let manual_result = self.verify_composite(problem_number);
 
         self.test_result = Some(TestResult {
             is_composite: !is_marked_as_prime && manual_result.is_composite,
             message: if is_marked_as_prime && manual_result.is_composite {
                 format!(
-                    "❌ Error: {} was marked as prime but is composite = {} x {}",
+                    "Error: {} was marked as prime but is composite = {} x {}",
                     21474836359u64, manual_result.factor1, manual_result.factor2
                 )
             } else if !is_marked_as_prime && manual_result.is_composite {
                 format!(
-                    "✅ Correct: {} was correctly marked as composite = {} x {}",
+                    "Correct: {} was correctly marked as composite = {} x {}",
                     21474836359u64, manual_result.factor1, manual_result.factor2
                 )
             } else {
@@ -136,8 +130,27 @@ impl PrimeCalculatorApp {
             };
         }
 
+        if num == 2 {
+            return FactorResult {
+                is_composite: false,
+                factor1: 0,
+                factor2: 0,
+            };
+        }
+
+        // Check if even
+        if num % 2 == 0 {
+            return FactorResult {
+                is_composite: true,
+                factor1: 2,
+                factor2: num / 2,
+            };
+        }
+
+        // Check odd divisors up to sqrt(num)
         let sqrt_num = (num as f64).sqrt() as u64 + 1;
-        for i in 2..=sqrt_num {
+        let mut i = 3u64;
+        while i <= sqrt_num {
             if num % i == 0 {
                 return FactorResult {
                     is_composite: true,
@@ -145,6 +158,7 @@ impl PrimeCalculatorApp {
                     factor2: num / i,
                 };
             }
+            i += 2; // Only check odd numbers
         }
 
         FactorResult {
@@ -161,6 +175,7 @@ impl PrimeCalculatorApp {
             Some(&val) => val,
             None => return numbers,
         };
+        
         let mut range_start = if self.filter_range {
             self.range_start.parse().unwrap_or(1)
         } else {
@@ -208,7 +223,7 @@ impl PrimeCalculatorApp {
 
             let is_prime = prime_iter.peek().map(|&&p| p == num).unwrap_or(false);
             if is_prime {
-                prime_iter.next(); // Consume this prime entry
+                prime_iter.next();
             }
 
             if is_prime || self.show_composites {
@@ -220,6 +235,18 @@ impl PrimeCalculatorApp {
         }
 
         numbers
+    }
+
+    fn format_number(&self, num: u64) -> String {
+        if num >= 1_000_000_000 {
+            format!("{:.2}B", num as f64 / 1_000_000_000.0)
+        } else if num >= 1_000_000 {
+            format!("{:.2}M", num as f64 / 1_000_000.0)
+        } else if num >= 1_000 {
+            format!("{:.2}K", num as f64 / 1_000.0)
+        } else {
+            format!("{}", num)
+        }
     }
 }
 
@@ -238,170 +265,376 @@ struct FactorResult {
 
 impl eframe::App for PrimeCalculatorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("🔢 High Performance Prime Calculator - GUI Edition");
-            ui.separator();
+        ctx.set_visuals(egui::Visuals::dark());
 
-            // Input area
-            ui.horizontal(|ui| {
-                ui.label("Max value:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.max_value_input)
-                        .desired_width(150.0)
-                        .hint_text("e.g. 1000000"),
-                );
-
-                if ui
-                    .add_enabled(!self.calculating, egui::Button::new("🚀 Calculate primes"))
-                    .clicked()
-                {
-                    self.calculate_primes();
-                }
-
-                if self.calculating {
-                    ui.spinner();
-                    ui.label("Calculating...");
-                }
+        // Top header panel
+        egui::TopBottomPanel::top("header")
+            .frame(egui::Frame {
+                fill: egui::Color32::from_rgb(25, 30, 40),
+                inner_margin: egui::Margin::symmetric(16.0, 12.0),
+                ..Default::default()
+            })
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("High Performance Prime Calculator")
+                            .size(18.0)
+                            .color(egui::Color32::from_rgb(100, 200, 255))
+                            .strong(),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new("v1.0")
+                                .size(11.0)
+                                .color(egui::Color32::GRAY),
+                        );
+                    });
+                });
             });
 
-            // Error message
-            if let Some(ref error) = self.error_message {
-                ui.colored_label(egui::Color32::RED, format!("❌ {}", error));
-            }
-
-            ui.separator();
-
-            // Result statistics
-            if !self.primes.is_empty() && !self.calculating {
-                ui.horizontal(|ui| {
-                    ui.label("📊 Statistics:");
-                    ui.separator();
-                    ui.label(format!("Total primes: {}", self.total_primes));
-                    ui.label(format!("Elapsed time: {:.2}s", self.calculation_time));
-                    ui.label(format!(
-                        "Processing speed: {} numbers/second",
-                        self.processing_speed
-                    ));
-                });
-
-                ui.separator();
-            }
-
-            // Option controls
-            egui::CollapsingHeader::new("⚙️ Options & Settings").show(ui, |ui| {
-                ui.checkbox(&mut self.show_composites, "Show composites");
-
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.filter_range, "Range filter:");
-                    if self.filter_range {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.range_start)
-                                .desired_width(80.0)
-                                .hint_text("Start"),
+        // Left sidebar
+        egui::SidePanel::left("sidebar")
+            .resizable(false)
+            .exact_width(280.0)
+            .frame(egui::Frame {
+                fill: egui::Color32::from_rgb(20, 24, 32),
+                inner_margin: egui::Margin::symmetric(12.0, 16.0),
+                ..Default::default()
+            })
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    // Configuration Card
+                    egui::Frame {
+                        fill: egui::Color32::from_rgb(30, 35, 45),
+                        rounding: egui::Rounding::same(8.0),
+                        inner_margin: egui::Margin::same(14.0),
+                        ..Default::default()
+                    }
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new("Configuration")
+                                .size(15.0)
+                                .color(egui::Color32::WHITE)
+                                .strong(),
                         );
-                        ui.label("-");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.range_end)
-                                .desired_width(80.0)
-                                .hint_text("End"),
+                        ui.add_space(10.0);
+
+                        ui.label(egui::RichText::new("Max Value:").size(12.0));
+                        ui.add_space(4.0);
+                        
+                        let text_edit = egui::TextEdit::singleline(&mut self.max_value_input)
+                            .hint_text("e.g. 100000")
+                            .desired_width(250.0);
+                        ui.add(text_edit);
+
+                        ui.add_space(10.0);
+
+                        let btn_text = if self.calculating {
+                            "Calculating..."
+                        } else {
+                            "Calculate Primes"
+                        };
+                        
+                        let button = egui::Button::new(egui::RichText::new(btn_text).size(13.0))
+                            .fill(egui::Color32::from_rgb(60, 120, 200))
+                            .rounding(4.0);
+
+                        if ui
+                            .add_sized([250.0, 32.0], button)
+                            .on_disabled_hover_text("Calculation in progress...")
+                            .clicked()
+                        {
+                            self.calculate_primes();
+                        }
+
+                        if self.calculating {
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label("Processing...");
+                            });
+                        }
+
+                        if let Some(ref error) = self.error_message {
+                            ui.add_space(8.0);
+                            ui.colored_label(
+                                egui::Color32::from_rgb(255, 100, 100),
+                                format!("Error: {}", error),
+                            );
+                        }
+                    });
+
+                    ui.add_space(12.0);
+
+                    // Options Card
+                    egui::Frame {
+                        fill: egui::Color32::from_rgb(30, 35, 45),
+                        rounding: egui::Rounding::same(8.0),
+                        inner_margin: egui::Margin::same(14.0),
+                        ..Default::default()
+                    }
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new("Options")
+                                .size(15.0)
+                                .color(egui::Color32::WHITE)
+                                .strong(),
                         );
+                        ui.add_space(10.0);
+
+                        ui.checkbox(&mut self.show_composites, "Show composites");
+                        ui.add_space(6.0);
+
+                        ui.checkbox(&mut self.filter_range, "Filter range");
+                        if self.filter_range {
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.range_start)
+                                        .desired_width(55.0)
+                                        .hint_text("Start"),
+                                );
+                                ui.label("-");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.range_end)
+                                        .desired_width(55.0)
+                                        .hint_text("End"),
+                                );
+                            });
+                        }
+
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.add_space(10.0);
+
+                        ui.checkbox(&mut self.testing_problematic, "Auto-test 21474836359");
+
+                        ui.add_space(6.0);
+                        if ui.button("Test 21474836359 Now").clicked() {
+                            self.test_problematic_number();
+                        }
+                    });
+
+                    if let Some(ref test_result) = self.test_result {
+                        ui.add_space(12.0);
+                        egui::Frame {
+                            fill: if test_result.is_composite {
+                                egui::Color32::from_rgb(30, 60, 40)
+                            } else {
+                                egui::Color32::from_rgb(80, 30, 30)
+                            },
+                            rounding: egui::Rounding::same(8.0),
+                            inner_margin: egui::Margin::same(10.0),
+                            ..Default::default()
+                        }
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&test_result.message)
+                                        .size(12.0)
+                                        .color(egui::Color32::WHITE),
+                                )
+                                .wrap(true),
+                            );
+                        });
                     }
                 });
-
-                ui.checkbox(
-                    &mut self.testing_problematic,
-                    "Automatically test problematic number (21474836359)",
-                );
-
-                if ui.button("🔍 Test problematic number").clicked() {
-                    self.test_problematic_number();
-                }
             });
 
-            // Test results
-            if let Some(ref test_result) = self.test_result {
-                ui.separator();
-                ui.colored_label(
-                    if test_result.is_composite {
-                        egui::Color32::GREEN
-                    } else {
-                        egui::Color32::RED
-                    },
-                    &test_result.message,
-                );
-            }
+        // Main content area
+        egui::CentralPanel::default()
+            .frame(egui::Frame {
+                fill: egui::Color32::from_rgb(20, 24, 32),
+                inner_margin: egui::Margin::same(16.0),
+                ..Default::default()
+            })
+            .show(ctx, |ui| {
+                // Statistics cards
+                if !self.primes.is_empty() && !self.calculating {
+                    ui.horizontal(|ui| {
+                        // Card 1
+                        egui::Frame {
+                            fill: egui::Color32::from_rgb(30, 35, 45),
+                            rounding: egui::Rounding::same(8.0),
+                            inner_margin: egui::Margin::same(12.0),
+                            ..Default::default()
+                        }
+                        .show(ui, |ui| {
+                            ui.set_min_width(140.0);
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    egui::RichText::new("Total Primes")
+                                        .size(11.0)
+                                        .color(egui::Color32::GRAY),
+                                );
+                                ui.add_space(4.0);
+                                ui.label(
+                                    egui::RichText::new(format!("{}", self.total_primes))
+                                        .size(18.0)
+                                        .color(egui::Color32::from_rgb(100, 255, 150))
+                                        .strong(),
+                                );
+                            });
+                        });
 
-            ui.separator();
+                        ui.add_space(10.0);
 
-            // Prime list
-            if !self.primes.is_empty() && !self.calculating {
-                let filtered_numbers = self.get_filtered_numbers();
+                        // Card 2
+                        egui::Frame {
+                            fill: egui::Color32::from_rgb(30, 35, 45),
+                            rounding: egui::Rounding::same(8.0),
+                            inner_margin: egui::Margin::same(12.0),
+                            ..Default::default()
+                        }
+                        .show(ui, |ui| {
+                            ui.set_min_width(140.0);
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    egui::RichText::new("Elapsed Time")
+                                        .size(11.0)
+                                        .color(egui::Color32::GRAY),
+                                );
+                                ui.add_space(4.0);
+                                ui.label(
+                                    egui::RichText::new(format!("{:.3}s", self.calculation_time))
+                                        .size(18.0)
+                                        .color(egui::Color32::from_rgb(255, 200, 100))
+                                        .strong(),
+                                );
+                            });
+                        });
 
-                ui.label(format!(
-                    "📋 Result list (showing {} numbers):",
-                    filtered_numbers.len()
-                ));
+                        ui.add_space(10.0);
 
-                egui::ScrollArea::vertical()
-                    .max_height(300.0)
-                    .show(ui, |ui| {
-                        let chunk_size = 10; // Numbers per row
+                        // Card 3
+                        egui::Frame {
+                            fill: egui::Color32::from_rgb(30, 35, 45),
+                            rounding: egui::Rounding::same(8.0),
+                            inner_margin: egui::Margin::same(12.0),
+                            ..Default::default()
+                        }
+                        .show(ui, |ui| {
+                            ui.set_min_width(140.0);
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    egui::RichText::new("Speed")
+                                        .size(11.0)
+                                        .color(egui::Color32::GRAY),
+                                );
+                                ui.add_space(4.0);
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "{}/s",
+                                        self.format_number(self.processing_speed)
+                                    ))
+                                    .size(18.0)
+                                    .color(egui::Color32::from_rgb(150, 150, 255))
+                                    .strong(),
+                                );
+                            });
+                        });
+                    });
 
-                        for chunk in filtered_numbers.chunks(chunk_size) {
-                            ui.horizontal(|ui| {
-                                for info in chunk {
-                                    if info.is_prime {
-                                        ui.colored_label(
-                                            egui::Color32::from_rgb(0, 150, 0),
-                                            format!("{:>8}", info.number),
-                                        );
-                                    } else {
-                                        ui.colored_label(
-                                            egui::Color32::GRAY,
-                                            format!("{:>8}", info.number),
-                                        );
-                                    }
-                                }
+                    ui.add_space(16.0);
+                }
+
+                // Results display
+                egui::Frame {
+                    fill: egui::Color32::from_rgb(30, 35, 45),
+                    rounding: egui::Rounding::same(8.0),
+                    inner_margin: egui::Margin::same(16.0),
+                    ..Default::default()
+                }
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("Results")
+                                .size(15.0)
+                                .color(egui::Color32::WHITE)
+                                .strong(),
+                        );
+
+                        if !self.primes.is_empty() {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let filtered = self.get_filtered_numbers();
+                                ui.label(
+                                    egui::RichText::new(format!("Showing {} numbers", filtered.len()))
+                                        .size(11.0)
+                                        .color(egui::Color32::GRAY),
+                                );
                             });
                         }
                     });
-            }
-        });
 
-        // Status bar
-        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("💡 Tips:");
-                ui.label("Enter a number to calculate every prime within that range");
-                ui.separator();
-                if self.primes.len() > 0 {
-                    ui.label(format!(
-                        "Currently showing: {} numbers",
-                        self.get_filtered_numbers().len()
-                    ));
-                }
+                    ui.add_space(12.0);
+
+                    if self.primes.is_empty() && !self.calculating {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(40.0);
+                            ui.label(
+                                egui::RichText::new("Enter a number and click Calculate to see results")
+                                    .color(egui::Color32::GRAY),
+                            );
+                        });
+                    } else {
+                        let filtered_numbers = self.get_filtered_numbers();
+                        
+                        // Calculate available height for scroll area
+                        let available_height = ui.available_height();
+
+                        egui::ScrollArea::vertical()
+                            .max_height(available_height - 10.0)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                                    
+                                    for info in filtered_numbers {
+                                        let (bg_color, text_color) = if info.is_prime {
+                                            (
+                                                egui::Color32::from_rgb(40, 80, 60),
+                                                egui::Color32::from_rgb(100, 255, 150),
+                                            )
+                                        } else {
+                                            (
+                                                egui::Color32::from_rgb(40, 40, 50),
+                                                egui::Color32::from_rgb(120, 120, 140),
+                                            )
+                                        };
+
+                                        egui::Frame {
+                                            fill: bg_color,
+                                            rounding: egui::Rounding::same(4.0),
+                                            inner_margin: egui::Margin::symmetric(8.0, 4.0),
+                                            ..Default::default()
+                                        }
+                                        .show(ui, |ui| {
+                                            ui.label(
+                                                egui::RichText::new(format!("{}", info.number))
+                                                    .color(text_color)
+                                                    .monospace()
+                                                    .size(12.0),
+                                            );
+                                        });
+                                    }
+                                });
+                            });
+                    }
+                });
             });
-        });
     }
 }
 
-// Attempt to load font files
 fn load_font_data() -> Option<egui::FontData> {
-    // Try different font paths in order of preference
     let font_paths = vec![
-        // Windows font paths
-        "C:\\Windows\\Fonts\\msyh.ttc",   // Microsoft YaHei
-        "C:\\Windows\\Fonts\\simhei.ttf", // SimHei
-        "C:\\Windows\\Fonts\\simsun.ttc", // SimSun
-        // macOS font paths
+        "C:\\Windows\\Fonts\\msyh.ttc",
+        "C:\\Windows\\Fonts\\simhei.ttf",
+        "C:\\Windows\\Fonts\\simsun.ttc",
         "/System/Library/Fonts/PingFang.ttc",
         "/System/Library/Fonts/Hiragino Sans GB.ttc",
-        // Linux font paths
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        // Fonts located in the project root
         "msyh.ttc",
         "simhei.ttf",
     ];
@@ -420,14 +653,13 @@ fn load_font_data() -> Option<egui::FontData> {
 }
 
 fn main() -> Result<(), eframe::Error> {
-    // Configure fonts
     let mut fonts = egui::FontDefinitions::default();
 
     if let Some(font_data) = load_font_data() {
-        // Register the loaded font
-        fonts.font_data.insert("chinese_font".to_owned(), font_data);
+        fonts
+            .font_data
+            .insert("chinese_font".to_owned(), font_data);
 
-        // Make it the default font
         fonts
             .families
             .entry(egui::FontFamily::Proportional)
@@ -442,7 +674,9 @@ fn main() -> Result<(), eframe::Error> {
     }
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 700.0]),
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1100.0, 700.0])
+            .with_min_inner_size([900.0, 600.0]),
         ..Default::default()
     };
 

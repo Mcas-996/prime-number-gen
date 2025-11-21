@@ -94,7 +94,7 @@ jobs:
             . "$HOME/.cargo/env"
             rustc -V
             cargo -V
-            cargo build --verbose --release
+            cargo build --verbose --release -j 1
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
