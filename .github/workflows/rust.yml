@@ -88,9 +88,12 @@ jobs:
           githubToken: ${{ github.token }}
           install: |
             apt-get update
-            apt-get install -y curl build-essential pkg-config libssl-dev ca-certificates
+            apt-get install -y curl build-essential pkg-config libssl-dev ca-certificates clang lld
             curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
           run: |
+            export CC=clang
+            export CXX=clang++
+            export RUSTFLAGS="-C link-arg=-fuse-ld=lld"
             . "$HOME/.cargo/env"
             rustc -V
             cargo -V
