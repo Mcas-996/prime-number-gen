@@ -2,9 +2,10 @@ use eframe::egui;
 use prime::prime_sieve;
 use std::fs;
 use std::path::Path;
-use std::time::Instant;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-#[derive(Default)]
 struct PrimeCalculatorApp {
     // Input state
     max_value_input: String,
@@ -28,6 +29,16 @@ struct PrimeCalculatorApp {
 
     // Summary statistics
     total_primes: usize,
+
+    // Heartbeat for low refresh cadence
+    last_tick: Instant,
+    heartbeat_value: u64,
+
+    // Async calculation channel
+    calc_rx: Option<Receiver<Result<CalcResult, String>>>,
+
+    // Terminal-like reader state
+    terminal_offset: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -36,16 +47,43 @@ struct TestResult {
     message: String,
 }
 
+#[derive(Debug)]
+struct CalcResult {
+    primes: Vec<u64>,
+    duration_secs: f64,
+    max_value: u64,
+}
+
 impl PrimeCalculatorApp {
     fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        let mut app = Self::default();
-        app.max_value_input = "100000".to_string();
-        app
+        Self {
+            max_value_input: "100000".to_string(),
+            calculating: false,
+            primes: Vec::new(),
+            calculation_time: 0.0,
+            processing_speed: 0,
+            error_message: None,
+            show_composites: false,
+            filter_range: false,
+            range_start: String::new(),
+            range_end: String::new(),
+            testing_problematic: false,
+            test_result: None,
+            total_primes: 0,
+            last_tick: Instant::now(),
+            heartbeat_value: 0,
+            calc_rx: None,
+            terminal_offset: 0,
+        }
     }
 
     fn calculate_primes(&mut self) {
         self.error_message = None;
         self.test_result = None;
+
+        if self.calculating {
+            return;
+        }
 
         match self.max_value_input.trim().parse::<u64>() {
             Ok(max_value) => {
@@ -62,40 +100,115 @@ impl PrimeCalculatorApp {
                 }
 
                 self.calculating = true;
+                self.calculation_time = 0.0;
+                self.processing_speed = 0;
+                self.terminal_offset = 0;
 
-                let start_time = Instant::now();
-                match std::panic::catch_unwind(|| {
-                    prime_sieve::segmented_sieve(max_value, 1_000_000)
-                }) {
-                    Ok(primes) => {
-                        let duration = start_time.elapsed();
+                let (tx, rx) = mpsc::channel();
+                self.calc_rx = Some(rx);
 
-                        self.primes = primes;
-                        self.total_primes = self.primes.len();
-                        self.calculation_time = duration.as_secs_f64();
-                        self.processing_speed = if duration.as_secs_f64() > 0.0 {
-                            (max_value as f64 / duration.as_secs_f64()) as u64
-                        } else {
-                            0
-                        };
-
-                        if max_value >= 21474836359 && self.testing_problematic {
-                            self.test_problematic_number();
+                thread::spawn(move || {
+                    let start_time = Instant::now();
+                    let result = std::panic::catch_unwind(|| {
+                        let primes = prime_sieve::segmented_sieve(max_value, 1_000_000);
+                        let duration_secs = start_time.elapsed().as_secs_f64();
+                        CalcResult {
+                            primes,
+                            duration_secs,
+                            max_value,
                         }
-                    }
-                    Err(_) => {
-                        self.error_message =
-                            Some("An error occurred during the calculation".to_string());
-                    }
-                }
+                    });
 
-                self.calculating = false;
+                    let _ = tx.send(match result {
+                        Ok(res) => Ok(res),
+                        Err(_) => Err("An error occurred during the calculation".to_string()),
+                    });
+                });
             }
             Err(_) => {
                 self.error_message = Some("Invalid numeric input".to_string());
                 self.calculating = false;
             }
         }
+    }
+
+    fn poll_calc_results(&mut self) {
+        if let Some(rx) = self.calc_rx.as_ref() {
+            match rx.try_recv() {
+                Ok(Ok(res)) => {
+                    self.primes = res.primes;
+                    self.total_primes = self.primes.len();
+                    self.calculation_time = res.duration_secs;
+                    self.processing_speed = if res.duration_secs > 0.0 {
+                        (res.max_value as f64 / res.duration_secs) as u64
+                    } else {
+                        0
+                    };
+
+                    if res.max_value >= 21474836359 && self.testing_problematic {
+                        self.test_problematic_number();
+                    }
+
+                    self.calculating = false;
+                    self.calc_rx = None;
+                }
+                Ok(Err(err)) => {
+                    self.error_message = Some(err);
+                    self.calculating = false;
+                    self.calc_rx = None;
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {
+                    self.error_message =
+                        Some("Calculation thread disconnected unexpectedly".to_string());
+                    self.calculating = false;
+                    self.calc_rx = None;
+                }
+            }
+        }
+    }
+
+    fn handle_terminal_input(&mut self, ctx: &egui::Context, lines_per_page: usize) {
+        let mut delta: isize = 0;
+        ctx.input(|i| {
+            if i.key_pressed(egui::Key::ArrowUp) {
+                delta -= 1;
+            }
+            if i.key_pressed(egui::Key::ArrowDown) {
+                delta += 1;
+            }
+            if i.key_pressed(egui::Key::PageUp) {
+                delta -= lines_per_page as isize;
+            }
+            if i.key_pressed(egui::Key::PageDown) {
+                delta += lines_per_page as isize;
+            }
+        });
+
+        if delta != 0 {
+            self.shift_terminal(delta);
+        }
+    }
+
+    fn shift_terminal(&mut self, delta: isize) {
+        const PRIMES_PER_LINE: usize = 10;
+        let total_lines =
+            (self.primes.len() + PRIMES_PER_LINE.saturating_sub(1)) / PRIMES_PER_LINE.max(1);
+        if total_lines == 0 {
+            self.terminal_offset = 0;
+            return;
+        }
+
+        let current = self.terminal_offset as isize;
+        let mut next = current + delta;
+        if next < 0 {
+            next = 0;
+        }
+        let max_start = total_lines.saturating_sub(1) as isize;
+        if next > max_start {
+            next = max_start;
+        }
+        self.terminal_offset = next as usize;
     }
 
     fn test_problematic_number(&mut self) {
@@ -293,6 +406,15 @@ struct FactorResult {
 
 impl eframe::App for PrimeCalculatorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_calc_results();
+        ctx.request_repaint_after(Duration::from_secs_f32(2.0));
+        if self.last_tick.elapsed() >= Duration::from_secs(2) {
+            self.heartbeat_value = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs() % 32_467)
+                .unwrap_or(0);
+            self.last_tick = Instant::now();
+        }
         ctx.set_visuals(egui::Visuals::dark());
 
         // Top header panel
@@ -613,49 +735,119 @@ impl eframe::App for PrimeCalculatorApp {
                             );
                         });
                     } else {
-                        let filtered_numbers = self.get_filtered_numbers();
-                        let available_height = ui.available_height();
-                        let available_width = ui.available_width();
+                        let available_height = ui.available_height().max(200.0);
+                        let line_height = 18.0;
+                        let lines_per_page =
+                            ((available_height - 40.0) / line_height).floor().max(4.0) as usize;
+                        const PRIMES_PER_LINE: usize = 10;
 
-                        let mut result_text = if filtered_numbers.is_empty() {
-                            "当前筛选范围内没有可显示的数字。".to_string()
-                        } else {
-                            filtered_numbers
-                                .iter()
-                                .map(|info| {
-                                    if info.is_prime {
-                                        info.number.to_string()
-                                    } else {
-                                        format!("{}(C)", info.number)
+                        if !self.primes.is_empty() {
+                            self.handle_terminal_input(ctx, lines_per_page);
+                        }
+
+                        let total_lines =
+                            (self.primes.len() + PRIMES_PER_LINE - 1) / PRIMES_PER_LINE;
+                        if total_lines > 0 && self.terminal_offset > total_lines.saturating_sub(1) {
+                            self.terminal_offset = total_lines.saturating_sub(1);
+                        }
+
+                        egui::Frame {
+                            fill: egui::Color32::from_rgb(10, 12, 16),
+                            rounding: egui::Rounding::same(6.0),
+                            inner_margin: egui::Margin::same(10.0),
+                            stroke: egui::Stroke::new(1.0, egui::Color32::from_rgb(40, 60, 90)),
+                            ..Default::default()
+                        }
+                        .show(ui, |ui| {
+                            ui.set_min_height(available_height - 12.0);
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(
+                                        "Prime Viewer (less-like, use ↑/↓, PgUp/PgDn)",
+                                    )
+                                    .monospace()
+                                    .color(egui::Color32::from_rgb(140, 220, 140)),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(
+                                            egui::RichText::new(format!(
+                                                "pos: {} / {}",
+                                                self.terminal_offset + 1,
+                                                total_lines.max(1)
+                                            ))
+                                            .monospace()
+                                            .color(egui::Color32::from_rgb(160, 170, 200)),
+                                        );
+                                    },
+                                );
+                            });
+                            ui.add_space(6.0);
+
+                            let start_line = self.terminal_offset;
+                            let end_line = (start_line + lines_per_page).min(total_lines);
+                            let mut buf = String::new();
+                            for line_idx in start_line..end_line {
+                                let start_idx = line_idx * PRIMES_PER_LINE;
+                                let end_idx = (start_idx + PRIMES_PER_LINE).min(self.primes.len());
+                                let mut line = format!("{:>8}: ", start_idx + 1);
+                                for (i, prime) in self.primes[start_idx..end_idx].iter().enumerate()
+                                {
+                                    if i > 0 {
+                                        line.push_str("  ");
                                     }
-                                })
-                                .collect::<Vec<_>>()
-                                .join(" ")
-                        };
+                                    line.push_str(&format!("{:>6}", prime));
+                                }
+                                buf.push_str(&line);
+                                buf.push('\n');
+                            }
+                            if buf.is_empty() && self.calculating {
+                                buf.push_str("Calculating... please wait.\n");
+                            } else if buf.is_empty() {
+                                buf.push_str("No data. Run a calculation to populate primes.\n");
+                            }
 
-                        let desired_rows = ((available_height / 18.0) as usize).max(8);
-
-                        ui.add_sized(
-                            [available_width, available_height - 10.0],
-                            egui::TextEdit::multiline(&mut result_text)
-                                .desired_rows(desired_rows)
-                                .desired_width(f32::INFINITY)
-                                .font(egui::TextStyle::Monospace)
-                                .code_editor()
-                                .lock_focus(true)
-                                .layouter(&mut |ui, text, wrap_width| {
-                                    ui.fonts(|f| {
-                                        f.layout(
-                                            text.to_owned(),
-                                            egui::FontId::monospace(12.0),
-                                            ui.style().visuals.text_color(),
-                                            wrap_width,
-                                        )
-                                    })
-                                }),
-                        );
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.monospace(
+                                        egui::RichText::new(buf)
+                                            .color(egui::Color32::from_rgb(180, 210, 180)),
+                                    );
+                                });
+                            ui.add_space(8.0);
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Showing lines {}-{} of {}, page size ~{}",
+                                    if total_lines == 0 {
+                                        0
+                                    } else {
+                                        self.terminal_offset + 1
+                                    },
+                                    end_line,
+                                    total_lines,
+                                    lines_per_page
+                                ))
+                                .monospace()
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(120, 140, 170)),
+                            );
+                        });
                     }
                 });
+            });
+
+        // Slow refresh heartbeat in the bottom-right corner to show the app is still alive.
+        egui::Area::new("heartbeat_overlay".into())
+            .anchor(egui::Align2::RIGHT_BOTTOM, [-12.0, -10.0])
+            .interactable(false)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new(format!("tick mod32467: {}", self.heartbeat_value))
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(120, 200, 120)),
+                );
             });
     }
 }

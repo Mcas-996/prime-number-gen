@@ -1,3 +1,5 @@
+use rayon::prelude::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 /// Rough estimate for the number of primes up to x.
@@ -72,108 +74,129 @@ pub fn segmented_sieve(max_value: u64, _batch_size: u64) -> Vec<u64> {
 
     const SEGMENT_SIZE: u64 = 1_000_000;
 
-    let segment_count = if max_value <= 2 {
-        0
+    let segments: Vec<(u64, u64)> = if max_value <= 2 {
+        Vec::new()
     } else {
-        ((max_value - 2 + SEGMENT_SIZE - 1) / SEGMENT_SIZE) as usize
+        let count = ((max_value - 2 + SEGMENT_SIZE - 1) / SEGMENT_SIZE) as usize;
+        (0..count)
+            .map(|idx| {
+                let start = 2 + idx as u64 * SEGMENT_SIZE;
+                let end = std::cmp::min(start + SEGMENT_SIZE - 1, max_value);
+                (start, end)
+            })
+            .collect()
     };
-    let current_time = Instant::now();
-    let mut total_primes_found = if max_value >= 2 { 1 } else { 0 };
 
+    let segment_count = segments.len();
     println!(
-        "Starting segmented processing, total {} segments",
+        "Starting segmented processing in parallel, total {} segments",
         segment_count
     );
 
-    for segment_idx in 0..segment_count {
-        let segment_start = 2 + segment_idx as u64 * SEGMENT_SIZE;
-        let segment_end = std::cmp::min(segment_start + SEGMENT_SIZE - 1, max_value);
+    let completed = AtomicUsize::new(0);
 
-        if segment_start > segment_end {
-            break;
-        }
-
-        let segment_size = (segment_end - segment_start + 1) as usize;
-        let mut is_prime_segment = vec![true; segment_size];
-
-        for &prime in &base_primes {
-            if prime == 2 {
-                continue;
+    let mut segment_results: Vec<(usize, Vec<u64>)> = segments
+        .par_iter()
+        .enumerate()
+        .map(|(idx, &(segment_start, segment_end))| {
+            let primes = sieve_segment(segment_start, segment_end, &base_primes);
+            let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+            if done % 10 == 0 || done == segment_count {
+                println!(
+                    "[parallel] {} / {} segments done ({:.1}%)",
+                    done,
+                    segment_count,
+                    (done as f64 / segment_count.max(1) as f64) * 100.0
+                );
             }
+            (idx, primes)
+        })
+        .collect();
 
-            let prime_squared = match prime.checked_mul(prime) {
-                Some(val) => val,
-                None => continue,
-            };
-
-            if prime_squared > segment_end {
-                continue;
-            }
-
-            let mut start_multiple = if prime_squared >= segment_start {
-                prime_squared
-            } else {
-                let remainder = segment_start % prime;
-                if remainder == 0 {
-                    segment_start
-                } else {
-                    segment_start + (prime - remainder)
-                }
-            };
-
-            // We later step by 2 * prime to skip even multiples, so ensure we start from an odd multiple.
-            if start_multiple % 2 == 0 {
-                match start_multiple.checked_add(prime) {
-                    Some(next) if next <= segment_end => start_multiple = next,
-                    _ => continue, // No odd multiple of `prime` exists in this segment (or overflowed).
-                }
-            }
-
-            let mut multiple = start_multiple;
-            while multiple <= segment_end && multiple >= segment_start {
-                let index = (multiple - segment_start) as usize;
-                if index < segment_size {
-                    is_prime_segment[index] = false;
-                }
-
-                match multiple.checked_add(2 * prime) {
-                    Some(next) => multiple = next,
-                    None => break,
-                }
-            }
-        }
-
-        for (i, &prime_flag) in is_prime_segment.iter().enumerate() {
-            if prime_flag {
-                let num = segment_start + i as u64;
-                if num > 2 && num % 2 == 1 {
-                    all_primes.push(num);
-                    total_primes_found += 1;
-                }
-            }
-        }
-
-        if segment_idx % 10 == 0 || segment_idx == segment_count - 1 {
-            let progress_percent = (segment_idx as f64 / segment_count as f64) * 100.0;
-            let elapsed = current_time.elapsed().as_secs_f64();
-            let rate = if elapsed > 0.0 {
-                (segment_idx as f64 * SEGMENT_SIZE as f64) / elapsed
-            } else {
-                0.0
-            };
-
-            println!(
-                "[{}] {:.1}% {}M {:.0}n/s segment {} base_primes {} primes_found {}",
-                "=".repeat((progress_percent as usize / 10).min(10)),
-                progress_percent,
-                (segment_idx as u64 * SEGMENT_SIZE) / 1_000_000,
-                rate,
-                segment_idx,
-                base_primes.len(),
-                total_primes_found
-            );
-        }
+    segment_results.sort_by_key(|(idx, _)| *idx);
+    for (_, mut primes) in segment_results {
+        all_primes.append(&mut primes);
     }
 
     all_primes
+}
+
+fn sieve_segment(segment_start: u64, segment_end: u64, base_primes: &[u64]) -> Vec<u64> {
+    if segment_start > segment_end {
+        return Vec::new();
+    }
+
+    let segment_start_odd = if segment_start % 2 == 0 {
+        segment_start + 1
+    } else {
+        segment_start
+    };
+    let segment_end_odd = if segment_end % 2 == 0 {
+        segment_end - 1
+    } else {
+        segment_end
+    };
+
+    if segment_start_odd > segment_end_odd {
+        return Vec::new();
+    }
+
+    let odd_count = ((segment_end_odd - segment_start_odd) / 2 + 1) as usize;
+    let mut is_prime_segment = vec![true; odd_count];
+
+    for &prime in base_primes {
+        if prime == 2 {
+            continue;
+        }
+
+        let prime_squared = match prime.checked_mul(prime) {
+            Some(val) => val,
+            None => continue,
+        };
+
+        if prime_squared > segment_end_odd {
+            continue;
+        }
+
+        let mut start_multiple = if prime_squared >= segment_start {
+            prime_squared
+        } else {
+            let remainder = segment_start % prime;
+            if remainder == 0 {
+                segment_start
+            } else {
+                segment_start + (prime - remainder)
+            }
+        };
+
+        if start_multiple % 2 == 0 {
+            match start_multiple.checked_add(prime) {
+                Some(next) if next <= segment_end_odd => start_multiple = next,
+                _ => continue,
+            }
+        }
+
+        let mut multiple = start_multiple;
+        while multiple <= segment_end_odd && multiple >= segment_start {
+            let index = ((multiple - segment_start_odd) / 2) as usize;
+            if index < odd_count {
+                is_prime_segment[index] = false;
+            }
+
+            match multiple.checked_add(2 * prime) {
+                Some(next) => multiple = next,
+                None => break,
+            }
+        }
+    }
+
+    let mut primes = Vec::with_capacity(odd_count / 10);
+    for (i, &prime_flag) in is_prime_segment.iter().enumerate() {
+        if prime_flag {
+            let num = segment_start_odd + (i as u64 * 2);
+            primes.push(num);
+        }
+    }
+
+    primes
 }
