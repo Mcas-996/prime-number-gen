@@ -614,47 +614,46 @@ impl eframe::App for PrimeCalculatorApp {
                         });
                     } else {
                         let filtered_numbers = self.get_filtered_numbers();
-
-                        // Calculate available height for scroll area
                         let available_height = ui.available_height();
+                        let available_width = ui.available_width();
 
-                        egui::ScrollArea::vertical()
-                            .max_height(available_height - 10.0)
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-
-                                    for info in filtered_numbers {
-                                        let (bg_color, text_color) = if info.is_prime {
-                                            (
-                                                egui::Color32::from_rgb(40, 80, 60),
-                                                egui::Color32::from_rgb(100, 255, 150),
-                                            )
-                                        } else {
-                                            (
-                                                egui::Color32::from_rgb(40, 40, 50),
-                                                egui::Color32::from_rgb(120, 120, 140),
-                                            )
-                                        };
-
-                                        egui::Frame {
-                                            fill: bg_color,
-                                            rounding: egui::Rounding::same(4.0),
-                                            inner_margin: egui::Margin::symmetric(8.0, 4.0),
-                                            ..Default::default()
-                                        }
-                                        .show(ui, |ui| {
-                                            ui.label(
-                                                egui::RichText::new(format!("{}", info.number))
-                                                    .color(text_color)
-                                                    .monospace()
-                                                    .size(12.0),
-                                            );
-                                        });
+                        let mut result_text = if filtered_numbers.is_empty() {
+                            "当前筛选范围内没有可显示的数字。".to_string()
+                        } else {
+                            filtered_numbers
+                                .iter()
+                                .map(|info| {
+                                    if info.is_prime {
+                                        info.number.to_string()
+                                    } else {
+                                        format!("{}(C)", info.number)
                                     }
-                                });
-                            });
+                                })
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        };
+
+                        let desired_rows = ((available_height / 18.0) as usize).max(8);
+
+                        ui.add_sized(
+                            [available_width, available_height - 10.0],
+                            egui::TextEdit::multiline(&mut result_text)
+                                .desired_rows(desired_rows)
+                                .desired_width(f32::INFINITY)
+                                .font(egui::TextStyle::Monospace)
+                                .code_editor()
+                                .lock_focus(true)
+                                .layouter(&mut |ui, text, wrap_width| {
+                                    ui.fonts(|f| {
+                                        f.layout(
+                                            text.to_owned(),
+                                            egui::FontId::monospace(12.0),
+                                            ui.style().visuals.text_color(),
+                                            wrap_width,
+                                        )
+                                    })
+                                }),
+                        );
                     }
                 });
             });
