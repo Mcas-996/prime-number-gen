@@ -32,7 +32,7 @@ struct PrimeCalculatorApp {
 
 #[derive(Clone, Debug)]
 struct TestResult {
-    is_composite: bool,
+    passed: bool,
     message: String,
 }
 
@@ -99,26 +99,54 @@ impl PrimeCalculatorApp {
     }
 
     fn test_problematic_number(&mut self) {
-        let problem_number = 21474836359;
-        let is_marked_as_prime = self.primes.contains(&problem_number);
+        let problem_number = 21474836359u64;
+
+        // Avoid confusing output when the current results do not even cover the test number.
+        if self.primes.is_empty() || *self.primes.last().unwrap_or(&0) < problem_number {
+            self.test_result = Some(TestResult {
+                passed: false,
+                message: format!(
+                    "Run a calculation up to {} before running the self-test.",
+                    problem_number
+                ),
+            });
+            return;
+        }
+
+        let is_marked_as_prime = self.primes.binary_search(&problem_number).is_ok();
         let manual_result = self.verify_composite(problem_number);
 
-        self.test_result = Some(TestResult {
-            is_composite: !is_marked_as_prime && manual_result.is_composite,
-            message: if is_marked_as_prime && manual_result.is_composite {
-                format!(
-                    "Error: {} was marked as prime but is composite = {} x {}",
-                    21474836359u64, manual_result.factor1, manual_result.factor2
-                )
-            } else if !is_marked_as_prime && manual_result.is_composite {
-                format!(
-                    "Correct: {} was correctly marked as composite = {} x {}",
-                    21474836359u64, manual_result.factor1, manual_result.factor2
+        let (passed, message) = if manual_result.is_composite {
+            if is_marked_as_prime {
+                (
+                    false,
+                    format!(
+                        "Error: {} was marked as prime but is composite = {} x {}",
+                        problem_number, manual_result.factor1, manual_result.factor2
+                    ),
                 )
             } else {
-                format!("Unexpected test result for 21474836359")
-            },
-        });
+                (
+                    true,
+                    format!(
+                        "Correct: {} marked as composite = {} x {}",
+                        problem_number, manual_result.factor1, manual_result.factor2
+                    ),
+                )
+            }
+        } else if is_marked_as_prime {
+            (true, format!("Correct: {} is prime", problem_number))
+        } else {
+            (
+                false,
+                format!(
+                    "Error: {} should be prime but was not found in the results",
+                    problem_number
+                ),
+            )
+        };
+
+        self.test_result = Some(TestResult { passed, message });
     }
 
     fn verify_composite(&self, num: u64) -> FactorResult {
@@ -175,7 +203,7 @@ impl PrimeCalculatorApp {
             Some(&val) => val,
             None => return numbers,
         };
-        
+
         let mut range_start = if self.filter_range {
             self.range_start.parse().unwrap_or(1)
         } else {
@@ -321,7 +349,7 @@ impl eframe::App for PrimeCalculatorApp {
 
                         ui.label(egui::RichText::new("Max Value:").size(12.0));
                         ui.add_space(4.0);
-                        
+
                         let text_edit = egui::TextEdit::singleline(&mut self.max_value_input)
                             .hint_text("e.g. 100000")
                             .desired_width(250.0);
@@ -334,7 +362,7 @@ impl eframe::App for PrimeCalculatorApp {
                         } else {
                             "Calculate Primes"
                         };
-                        
+
                         let button = egui::Button::new(egui::RichText::new(btn_text).size(13.0))
                             .fill(egui::Color32::from_rgb(60, 120, 200))
                             .rounding(4.0);
@@ -418,7 +446,7 @@ impl eframe::App for PrimeCalculatorApp {
                     if let Some(ref test_result) = self.test_result {
                         ui.add_space(12.0);
                         egui::Frame {
-                            fill: if test_result.is_composite {
+                            fill: if test_result.passed {
                                 egui::Color32::from_rgb(30, 60, 40)
                             } else {
                                 egui::Color32::from_rgb(80, 30, 30)
@@ -555,14 +583,20 @@ impl eframe::App for PrimeCalculatorApp {
                         );
 
                         if !self.primes.is_empty() {
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let filtered = self.get_filtered_numbers();
-                                ui.label(
-                                    egui::RichText::new(format!("Showing {} numbers", filtered.len()))
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let filtered = self.get_filtered_numbers();
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "Showing {} numbers",
+                                            filtered.len()
+                                        ))
                                         .size(11.0)
                                         .color(egui::Color32::GRAY),
-                                );
-                            });
+                                    );
+                                },
+                            );
                         }
                     });
 
@@ -572,13 +606,15 @@ impl eframe::App for PrimeCalculatorApp {
                         ui.vertical_centered(|ui| {
                             ui.add_space(40.0);
                             ui.label(
-                                egui::RichText::new("Enter a number and click Calculate to see results")
-                                    .color(egui::Color32::GRAY),
+                                egui::RichText::new(
+                                    "Enter a number and click Calculate to see results",
+                                )
+                                .color(egui::Color32::GRAY),
                             );
                         });
                     } else {
                         let filtered_numbers = self.get_filtered_numbers();
-                        
+
                         // Calculate available height for scroll area
                         let available_height = ui.available_height();
 
@@ -588,7 +624,7 @@ impl eframe::App for PrimeCalculatorApp {
                             .show(ui, |ui| {
                                 ui.horizontal_wrapped(|ui| {
                                     ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                                    
+
                                     for info in filtered_numbers {
                                         let (bg_color, text_color) = if info.is_prime {
                                             (
@@ -656,9 +692,7 @@ fn main() -> Result<(), eframe::Error> {
     let mut fonts = egui::FontDefinitions::default();
 
     if let Some(font_data) = load_font_data() {
-        fonts
-            .font_data
-            .insert("chinese_font".to_owned(), font_data);
+        fonts.font_data.insert("chinese_font".to_owned(), font_data);
 
         fonts
             .families
