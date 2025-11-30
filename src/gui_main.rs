@@ -39,6 +39,11 @@ struct PrimeCalculatorApp {
 
     // Terminal-like reader state
     terminal_offset: usize,
+    page_buffer: String,
+    page_buffer_offset: usize,
+    page_buffer_lines_per_page: usize,
+    page_buffer_total_lines: usize,
+    page_buffer_primes_len: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -74,6 +79,11 @@ impl PrimeCalculatorApp {
             heartbeat_value: 0,
             calc_rx: None,
             terminal_offset: 0,
+            page_buffer: String::new(),
+            page_buffer_offset: usize::MAX,
+            page_buffer_lines_per_page: 0,
+            page_buffer_total_lines: 0,
+            page_buffer_primes_len: 0,
         }
     }
 
@@ -103,6 +113,8 @@ impl PrimeCalculatorApp {
                 self.calculation_time = 0.0;
                 self.processing_speed = 0;
                 self.terminal_offset = 0;
+                self.page_buffer.clear();
+                self.page_buffer_primes_len = 0;
 
                 let (tx, rx) = mpsc::channel();
                 self.calc_rx = Some(rx);
@@ -407,7 +419,13 @@ struct FactorResult {
 impl eframe::App for PrimeCalculatorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_calc_results();
-        ctx.request_repaint_after(Duration::from_secs_f32(2.0));
+        // Run the UI at 60 Hz when idle, throttle to ~2 Hz while heavy calculation runs.
+        let repaint_interval = if self.calculating {
+            Duration::from_millis(500)
+        } else {
+            Duration::from_secs_f32(1.0 / 60.0)
+        };
+        ctx.request_repaint_after(repaint_interval);
         if self.last_tick.elapsed() >= Duration::from_secs(2) {
             self.heartbeat_value = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -433,6 +451,18 @@ impl eframe::App for PrimeCalculatorApp {
                             .strong(),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let (status_text, status_color) = if self.calculating {
+                            ("计算中", egui::Color32::from_rgb(255, 160, 90))
+                        } else {
+                            ("空闲", egui::Color32::from_rgb(120, 200, 120))
+                        };
+                        ui.label(
+                            egui::RichText::new(status_text)
+                                .size(12.0)
+                                .color(status_color)
+                                .strong(),
+                        );
+                        ui.add_space(8.0);
                         ui.label(
                             egui::RichText::new("v1.0")
                                 .size(11.0)
@@ -751,6 +781,8 @@ impl eframe::App for PrimeCalculatorApp {
                             self.terminal_offset = total_lines.saturating_sub(1);
                         }
 
+                        self.refresh_page_buffer(lines_per_page, total_lines);
+
                         egui::Frame {
                             fill: egui::Color32::from_rgb(10, 12, 16),
                             rounding: egui::Rounding::same(6.0),
@@ -785,38 +817,17 @@ impl eframe::App for PrimeCalculatorApp {
                             });
                             ui.add_space(6.0);
 
-                            let start_line = self.terminal_offset;
-                            let end_line = (start_line + lines_per_page).min(total_lines);
-                            let mut buf = String::new();
-                            for line_idx in start_line..end_line {
-                                let start_idx = line_idx * PRIMES_PER_LINE;
-                                let end_idx = (start_idx + PRIMES_PER_LINE).min(self.primes.len());
-                                let mut line = format!("{:>8}: ", start_idx + 1);
-                                for (i, prime) in self.primes[start_idx..end_idx].iter().enumerate()
-                                {
-                                    if i > 0 {
-                                        line.push_str("  ");
-                                    }
-                                    line.push_str(&format!("{:>6}", prime));
-                                }
-                                buf.push_str(&line);
-                                buf.push('\n');
-                            }
-                            if buf.is_empty() && self.calculating {
-                                buf.push_str("Calculating... please wait.\n");
-                            } else if buf.is_empty() {
-                                buf.push_str("No data. Run a calculation to populate primes.\n");
-                            }
-
                             egui::ScrollArea::vertical()
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
                                     ui.monospace(
-                                        egui::RichText::new(buf)
+                                        egui::RichText::new(&self.page_buffer)
                                             .color(egui::Color32::from_rgb(180, 210, 180)),
                                     );
                                 });
                             ui.add_space(8.0);
+                            let start_line = self.terminal_offset;
+                            let end_line = (start_line + lines_per_page).min(total_lines);
                             ui.label(
                                 egui::RichText::new(format!(
                                     "Showing lines {}-{} of {}, page size ~{}",
@@ -849,6 +860,61 @@ impl eframe::App for PrimeCalculatorApp {
                         .color(egui::Color32::from_rgb(120, 200, 120)),
                 );
             });
+    }
+}
+
+impl PrimeCalculatorApp {
+    fn refresh_page_buffer(&mut self, lines_per_page: usize, total_lines: usize) {
+        let needs_refresh = self.page_buffer_offset != self.terminal_offset
+            || self.page_buffer_lines_per_page != lines_per_page
+            || self.page_buffer_total_lines != total_lines
+            || self.page_buffer_primes_len != self.primes.len();
+
+        if !needs_refresh {
+            return;
+        }
+
+        self.page_buffer_offset = self.terminal_offset;
+        self.page_buffer_lines_per_page = lines_per_page;
+        self.page_buffer_total_lines = total_lines;
+        self.page_buffer_primes_len = self.primes.len();
+
+        self.page_buffer.clear();
+
+        if self.primes.is_empty() {
+            if self.calculating {
+                self.page_buffer.push_str("Calculating... please wait.\n");
+            } else {
+                self.page_buffer
+                    .push_str("No data. Run a calculation to populate primes.\n");
+            }
+            return;
+        }
+
+        let start_line = self.terminal_offset;
+        let end_line = (start_line + lines_per_page).min(total_lines);
+
+        const PRIMES_PER_LINE: usize = 10;
+
+        // Pre-allocate roughly enough space for the visible page to avoid reallocations.
+        let approx_chars_per_prime = 8; // "  123456"
+        let approx_line_len = 12 + PRIMES_PER_LINE * approx_chars_per_prime;
+        let approx_capacity = (end_line.saturating_sub(start_line) * approx_line_len).max(64);
+        self.page_buffer.reserve(approx_capacity);
+
+        for line_idx in start_line..end_line {
+            let start_idx = line_idx * PRIMES_PER_LINE;
+            let end_idx = (start_idx + PRIMES_PER_LINE).min(self.primes.len());
+            let mut line = format!("{:>8}: ", start_idx + 1);
+            for (i, prime) in self.primes[start_idx..end_idx].iter().enumerate() {
+                if i > 0 {
+                    line.push_str("  ");
+                }
+                line.push_str(&format!("{:>6}", prime));
+            }
+            self.page_buffer.push_str(&line);
+            self.page_buffer.push('\n');
+        }
     }
 }
 

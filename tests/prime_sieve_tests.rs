@@ -303,6 +303,27 @@ mod tests {
     }
 
     #[test]
+    fn test_prime_count_ten_million() {
+        // Regression: ensure the full set of primes is produced for 10,000,000
+        let max_value = 10_000_000;
+        let primes = prime_sieve::segmented_sieve(max_value, 1_000_000);
+        let expected_count = 664_579;
+
+        assert_eq!(
+            primes.len(),
+            expected_count,
+            "Incorrect prime count for 10,000,000: expected {}, got {}",
+            expected_count,
+            primes.len()
+        );
+        assert_eq!(
+            primes.last().copied(),
+            Some(9_999_991),
+            "Last prime under 10,000,000 mismatch"
+        );
+    }
+
+    #[test]
     fn test_random_prime_verification() {
         println!("Testing random prime verification...");
 

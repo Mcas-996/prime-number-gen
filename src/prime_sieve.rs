@@ -149,41 +149,41 @@ fn sieve_segment(segment_start: u64, segment_end: u64, base_primes: &[u64]) -> V
             continue;
         }
 
-        let prime_squared = match prime.checked_mul(prime) {
+        let mut start = match prime.checked_mul(prime) {
             Some(val) => val,
             None => continue,
         };
 
-        if prime_squared > segment_end_odd {
+        // Find the first multiple of `prime` that lies in the segment (and is odd).
+        if start < segment_start_odd {
+            let remainder = segment_start_odd % prime;
+            start = if remainder == 0 {
+                segment_start_odd
+            } else {
+                segment_start_odd + (prime - remainder)
+            };
+        }
+
+        if start % 2 == 0 {
+            start = match start.checked_add(prime) {
+                Some(next) => next,
+                None => continue,
+            };
+        }
+
+        if start > segment_end_odd {
             continue;
         }
 
-        let mut start_multiple = if prime_squared >= segment_start {
-            prime_squared
-        } else {
-            let remainder = segment_start % prime;
-            if remainder == 0 {
-                segment_start
-            } else {
-                segment_start + (prime - remainder)
-            }
-        };
-
-        if start_multiple % 2 == 0 {
-            match start_multiple.checked_add(prime) {
-                Some(next) if next <= segment_end_odd => start_multiple = next,
-                _ => continue,
-            }
-        }
-
-        let mut multiple = start_multiple;
-        while multiple <= segment_end_odd && multiple >= segment_start {
+        let step = 2 * prime;
+        let mut multiple = start;
+        while multiple <= segment_end_odd {
             let index = ((multiple - segment_start_odd) / 2) as usize;
             if index < odd_count {
                 is_prime_segment[index] = false;
             }
 
-            match multiple.checked_add(2 * prime) {
+            match multiple.checked_add(step) {
                 Some(next) => multiple = next,
                 None => break,
             }
